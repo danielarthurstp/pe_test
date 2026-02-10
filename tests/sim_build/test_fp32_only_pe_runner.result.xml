@@ -1,0 +1,7 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1770747316" />
+    <testcase name="fp32_only_pe_sanity_tests" classname="test_pe_fp32" file="/Users/daniel_work/Documents/phinity_task/pe_test/tests/test_pe_fp32.py" lineno="244" time="0.34185075759887695" sim_time_ns="2645.0" ratio_time="7737.29453922582" />
+    <testcase name="fp32_only_pe_random_tests" classname="test_pe_fp32" file="/Users/daniel_work/Documents/phinity_task/pe_test/tests/test_pe_fp32.py" lineno="479" time="0.8914399147033691" sim_time_ns="1505.0" ratio_time="1688.2797989820726" />
+  </testsuite>
+</testsuites>
