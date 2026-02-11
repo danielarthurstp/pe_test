@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 
 module pe_fp32(
     input  [159:0] A,
