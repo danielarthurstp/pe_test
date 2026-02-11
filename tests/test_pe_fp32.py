@@ -476,15 +476,15 @@ def test_fp32_only_pe_runner():
 
     proj_path = Path(__file__).resolve().parent.parent
     sources = [
-        proj_path / "golden/pe_fp32.sv",
-        proj_path / "golden/CEC.v",
-        proj_path / "golden/Alignment_Shifter.v",
-        proj_path / "golden/Adder_Tree.v",
-        proj_path / "golden/CLA_AdderTree.v",
-        proj_path / "golden/compressor7to2.v",
-        proj_path / "golden/csla.v",
-        proj_path / "golden/LZD.v",
-        proj_path / "golden/multi12bX12b.v",
+        proj_path / "sources/pe_fp32.sv",
+        proj_path / "sources/CEC.v",
+        proj_path / "sources/Alignment_Shifter.v",
+        proj_path / "sources/Adder_Tree.v",
+        proj_path / "sources/CLA_AdderTree.v",
+        proj_path / "sources/compressor7to2.v",
+        proj_path / "sources/csla.v",
+        proj_path / "sources/LZD.v",
+        proj_path / "sources/multi12bX12b.v",
     ]
 
     runner = get_runner(sim)
