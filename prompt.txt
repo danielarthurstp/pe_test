@@ -1,1 +1,17 @@
-“Complete the implementation in sources/pe_fp32.sv.”
+Complete the given partial Systemverilog RTL code based on the specification doc/spec.md. The RTL code should be synthesizable. The PEs must be submodules as described on Specification.
+Complete the module SystemVerilog RTL code using the specification at doc/spec.md. Be aware that the code must only use synthetizable code. The code may have submodules that are described on specification.
+Make sure that the name of the files match with the following:
+- Top:        pe_fp32.sv
+- Submodules: 
+              Adder_Tree.v
+              Alignment_Shifter.v
+              CEC.v
+              CLA_AdderTree.v
+              LZD.v
+              compressor7to2.v
+              csla.v
+              multi12bX12b.v
+
+The internal structure may be divided as you want, but as a hint, the submodules are described.
+
+**Important**: This environment uses Icarus Verilog for testing. Avoid using SystemVerilog Assertion (SVA) property/sequence syntax if adding assertions.$
