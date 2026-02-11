@@ -6,9 +6,7 @@
 
 At a high level:
 
-\[
-out \approx \text{RoundFP32}\left(\sum_{i=0}^{4} (A_i \times B_i)\right)
-\]
+out ≈ RoundFP32( Σ_{i=0..4} (A_i × B_i) )
 
 Where each `A_i` and `B_i` is an IEEE-754 binary32 value extracted from the packed input buses.
 
