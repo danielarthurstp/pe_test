@@ -44,8 +44,10 @@ Each lane is IEEE-754 binary32: {sign[31], exp[30:23], mant[22:0]}.
 
 For each lane i:
 	•	Extract sign/exponent/mantissa.
-]	•	Multiply mantissas via segmented multiplication across two cycles (clk_cntr driven).
+	•	Form an internal mantissa with an implicit leading 1 for “non-zero” inputs.
+	•	Multiply mantissas via segmented multiplication across two cycles (clk_cntr driven).
 	•	Align partial products based on exponent compare logic.
+	•	Convert signed terms to 2’s complement.
 	•	Reduce via adder tree + optional accumulation (also time-muxed).
 	•	Normalize and round to produce FP32 output.
 
@@ -88,15 +90,8 @@ So “effective check time” is Phase1 + 4 cycles.
 5. Supported / Unsupported IEEE-754 Cases
 
 5.1 Explicitly handled
-	•	Zero-ish behavior: when sum_f == 0, exponent is forced to 0 and mantissa becomes 0.
+	•	Normalized numbers
 	•	RNE rounding in the final pack stage.
-
-5.2 Not explicitly specified / may be incorrect
-	•	NaN propagation
-	•	+/-Infinity behavior
-	•	Subnormals (input or output)
-	•	Overflow/underflow behavior (saturation to Inf, flush-to-zero, etc.)
-	•	Exact IEEE exception flags
 
 Your cocotb testbench has already been updated to avoid generating Inf and to avoid overflow in stimulus. That matches the “finite-only” expectation.
 
@@ -111,15 +106,6 @@ The testbench assumes exactly:
 	•	clk_cntr=0 for 1 cycle, then clk_cntr=1 for 1 cycle
 	•	Wait 4 cycles
 	•	Compare out
-
-6.2 Comparing +0 vs -0
-
-Because the RTL may produce -0 (0x80000000) when the sum cancels to zero, the spec treats +0 and -0 as equivalent unless you explicitly require “sign-of-zero = 0”.
-
-If you want the RTL to never output -0, you should override sign when sum is zero:
-	•	if (sum_f == 0) outt[31] = 1'b0;
-
-Otherwise, the testbench should compare zeros as equal.
 
 ⸻
 
