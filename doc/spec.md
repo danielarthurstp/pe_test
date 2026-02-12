@@ -60,8 +60,8 @@ The cocotb driver samples `out` **4 cycles after Phase 1** (i.e., after the phas
 
 | Stage | When active | What it does | Major outputs |
 |---:|---|---|---|
-| Stage 1 | `clk_cntr_stage1` | decode lanes, form segmented multiplier inputs, compute per-lane exponent/sign, and generate 10 partial products (2 per lane) | `product[0..9]`, `d_exp0..d_exp4`, `ssign0..ssign4` |
-| Stage 2 | combinational, gated by `clk_cntr_stage2` | exponent compare (max + diffs), align 10 partial products, sign-extend, accumulate via adder-tree (with optional feedback accumulator) | `ssum`, `mmax_exp_s2`, `sign_final` |
+| Stage 1 | `clk_cntr_stage1` | decode lanes, form segmented multiplier inputs, compute per-lane exponent/sign, and generate 5 partial products | `product[0..4]`, `d_exp0..d_exp4`, `ssign0..ssign4` |
+| Stage 2 | combinational, gated by `clk_cntr_stage2` | exponent compare (max + diffs), align 5 partial products, sign-extend, accumulate via adder-tree (with optional feedback accumulator) | `ssum`, `mmax_exp_s2`, `sign_final` |
 | Stage 3 | combinational, gated by `clk_cntr_stage3` | magnitude + leading-zero detect, normalize, RNE rounding, pack FP32 | `outt` (registered to `out`) |
 
 ---
