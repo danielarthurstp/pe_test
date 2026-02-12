@@ -59,6 +59,15 @@ The dot product is computed in these logical phases:
 
 ## 4. Detailed Processing Steps
 
+### 4.0 Pipeline timeline
+
+| Cycle (clk edge) | `clk_cntr` phase | Main computations | Output / registered state |
+|---:|:---:|---|---|
+| 1 | Phase 0 (`0`) | **First segmented multiply pass (low-side)** per lane: compute `a_hi*b_lo` and `a_lo*b_lo`, form `pp0`. In parallel: compute `sign_prod[i]` and `exp_prod[i]`. Compute `exp_ref` (e.g., max of `exp_prod[i]`) and per-lane shift `sh0[i] = exp_ref - exp_prod[i]`. | Register `pp0_aligned_mag[i] = (pp0 >> sh0[i])`, `sign_prod[i]`, and `exp_ref`. |
+| 2 | Phase 1 (`1`) | **(a)** Apply sign to the aligned `pp0`: if `sign_prod[i]=1` take two’s complement of `pp0_aligned_mag[i]` to form `pp0_signed[i]`. **(b)** Second segmented multiply pass (high-side): compute `a_hi*b_hi` and `a_lo*b_hi`, form `pp1`. **(c)** Alignment shift for `pp1` is computed by **CEC (exponent comparator)**, producing `sh1[i]` and `pp1_aligned_mag[i] = (pp1 >> sh1[i])`. | Register partial sum `sum0 = Σ(pp0_signed[i])` and register `pp1_aligned_mag[i]` (plus `sign_prod[i]` for reuse). |
+| 3 | Idle (`0`) | Apply sign to `pp1_aligned_mag[i]`: if `sign_prod[i]=1`, take two’s complement to form `pp1_signed[i]`. Then accumulate: `sum1 = sum0 + Σ(pp1_signed[i])`. | Register **final signed accumulator** `sum_final = sum1`. |
+| 4 | Idle (`0`) | **Final pack stage:** (1) If `sum_final` is negative, take two’s complement to get magnitude and set output sign. (2) Run `LZD` (leading-one/leading-zero detection) on the magnitude to find the normalization shift. (3) Normalize (shift magnitude) and adjust exponent: `exp_out = exp_ref + exp_adjust`. (4) Round (RNE if implemented) and pack `{sign, exp, mant}`. | Drive `out` with the packed FP32 result. `out` is **valid at this cycle** (matches the cocotb “Phase‑1 + 4 cycles” check). |
+
 ### 4.1 Decode
 For each lane `i`:
 - `sign_A = A_lane[i][31]`
@@ -137,14 +146,55 @@ Rounding policy may be implementation-defined for this generic spec; typical cho
 
 - only normalized numbers are taken into account.
 
-## 6. Synthesizability Requirements
+## 6. Functional behavior (what math is implemented)
+
+### 6.1 Segmented multiplication (2 partial products per lane)
+
+Each FP32 significand is treated as `1.frac` (24-bit) and split into two 12-bit chunks:
+
+- High chunk: `{1'b1, frac[22:12]}` (12 bits)
+- Low chunk: `frac[11:0]` (12 bits)
+
+For each lane, `pe_fp32` generates **two** 12×12 multiplications across the two phases, resulting in two partial products per lane. These are later shifted by `p_shift` (0/12/24) and summed.
+
+> Exact mapping is implemented in Stage 1 in `pe_fp32.sv` by assigning `a0..a9`, `b0..b9`, `p_shift[0..9]` depending on `clk_cntr_stage1`.
+
+### 6.2 Exponent compare and alignment
+
+- A single reference exponent `mmax_exp_s2` is computed across lanes.
+- For each lane i, `diff_i = mmax_exp_s2 - d_exp_i`.
+- Each lane’s two partial products inherit the same `diff_i` (mapped into `d_ddiff[2*i]` and `d_ddiff[2*i+1]`).
+- Alignment shifts are performed by `Alignment_Shifter`:
+  - Left shift by `p_shift[k]` (segment placement)
+  - Right shift by `d_ddiff[k]` (exponent alignment)
+
+### 6.3 Signed accumulation
+
+Each aligned partial product is sign-extended and summed using the adder tree.
+- The adder tree takes a sign bit per term (`s_sign[k]`).
+- A feedback accumulator `acc_in` is set to:
+  - `0` when `clk_cntr_stage2 == 0`
+  - previous sum (`ssum`) when `clk_cntr_stage2 == 1`
+
+This allows the phase‑0 partials to be summed first, then phase‑1 partials added in the next step.
+
+### 6.4 Normalize and round (Stage 3)
+
+- Convert final signed sum to magnitude + sign.
+- Use `LZD` to find leading zeros → compute a normalization shift (`position`).
+- Normalize (`sum_f << position`), then pack:
+  - exponent update from `mmax_exp_s2` and `position`
+  - mantissa field with **RNE rounding** using Guard/ Round/ Sticky bits
+- If sum is 0 → exponent forced to 0.
+
+## 7. Synthesizability Requirements
 - No SystemVerilog Assertions (SVA) `property/sequence` syntax.
 - Avoid non-synthesizable constructs in the RTL datapath (e.g., real numbers).
 - Use `always_ff`/`always_comb` or `always @(*)`/`always @(posedge clk)` styles compatible with Icarus.
 - All arrays and loops must be synthesizable (static bounds).
 - Reset policy is implementation-defined; if no reset is present, ensure outputs are deterministically assigned before being sampled (e.g., via pipeline valid gating).
 
-## 7. Provided Files
+## 8. Provided Files
 The implementation must keep these filenames/modules:
 - Top: `pe_fp32.sv`
 - Submodules:
