@@ -287,6 +287,8 @@ HINT:
 
             outt[31] = ssignf;
         end
+
+		// where the 20 comes from? It is the expected position of the leading one. For a 66 bit accumulator result of sum_f, the constant 20 is where the leading 1 should be placed, and it is compared to the output of the lzd to increase or decrease the exponent if necessary.
 END OF HINT
 ---
 
