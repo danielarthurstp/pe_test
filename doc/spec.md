@@ -1,120 +1,158 @@
-# pe_fp32 — Specification (spec.md)
+# pe_fp32 specification
 
-## 1. Overview
+This document specifies how the `pe_fp32` processing element computes a **5-lane FP32 dot product** in a synthesizable RTL design using the provided submodules.
 
-`pe_fp32` implements a **5-lane FP32 dot-product** (multiply-accumulate across 5 FP32 lanes) using a **3-stage pipelined datapath** and a **2-cycle time-multiplexed segmented multiplier** per lane.
+> Goal:  
+> `out = Σ_{i=0..4} (A[i] * B[i])` where `A` and `B` each contain 5 packed IEEE-754 single-precision values.
 
-At a high level:
+## 1. Top-Level Interface
 
-out ≈ RoundFP32( Σ_{i=0..4} (A_i × B_i) )
+### 1.1 Module
+- **Top file:** `sources/pe_fp32.sv`
+- **Top module:** `pe_fp32`
 
-Where each `A_i` and `B_i` is an IEEE-754 binary32 value extracted from the packed input buses.
+### 1.2 Ports
+- `input  [159:0] A` : packed FP32 lanes `A[0]..A[4]`
+- `input  [159:0] B` : packed FP32 lanes `B[0]..B[4]`
+- `input          clk`
+- `input          clk_cntr` : phase/control signal (implementation-defined)
+- `output reg [31:0] out` : FP32 dot-product output
 
-> Important: This module is **not a fully IEEE-754 compliant FP32 FMA**. It is a segmented-multiply + align + integer-accumulate + normalize/round pipeline that aims to match a “round-at-the-end” style accumulation for many cases, but it does not explicitly implement all IEEE corner cases (NaN/Inf/subnormals/etc).
+### 1.3 Lane Packing
+Each lane is 32 bits:
+- `lane0 = bus[31:0]`
+- `lane1 = bus[63:32]`
+- `lane2 = bus[95:64]`
+- `lane3 = bus[127:96]`
+- `lane4 = bus[159:128]`
 
----
+## 2. FP32 Format
+IEEE-754 single-precision:
+- `sign` : 1 bit
+- `exp`  : 8 bits (bias 127)
+- `mant` : 23 bits (fraction)
+- For normalized numbers: significand = `1.mant`
+- For subnormals (exp==0): significand = `0.mant`
 
-## 2. Module Interface
+This PE is intended to be synthesizable and compatible with Icarus Verilog for simulation.
 
-```verilog
-module pe_fp32(
-    input  [159:0] A,
-    input  [159:0] B,
-    input          clk,
-    input          clk_cntr,
-    output reg [31:0] out
-);
+## 3. Computation Overview
 
-2.1 Packed lane format
+The dot product is computed in these logical phases:
 
-A and B each contain 5 lanes of FP32, packed little-lane-first:
-	•	Lane 0: bits [31:0]
-	•	Lane 1: bits [63:32]
-	•	Lane 2: bits [95:64]
-	•	Lane 3: bits [127:96]
-	•	Lane 4: bits [159:128]
+1. **Decode** each FP32 input lane: sign, exponent, mantissa.
+2. **Multiply** per-lane significands and compute per-lane exponents/signs:
+   - `sign_prod[i] = sign_A[i] XOR sign_B[i]`
+   - `exp_prod[i]  = exp_A[i] + exp_B[i] - 127`
+   - `mant_prod[i] = sig_A[i] * sig_B[i]`
+3. **Exponent comparison** across lanes to choose an alignment reference exponent:
+   - `exp_max = max(exp_prod[i])` for all valid lanes
+4. **Alignment**: shift each partial product based on exponent difference:
+   - `shift[i] = exp_max - exp_prod[i]`
+   - `aligned[i] = mant_prod[i] >> shift[i]` (right shift for smaller exponents)
+5. **Signed accumulation** using two's-complement based on product sign:
+   - If `sign_prod[i]==1`: `signed_pp[i] = two_complement(aligned[i])`
+   - Else: `signed_pp[i] = aligned[i]`
+6. **Adder tree reduction** to sum all `signed_pp[i]` to a wide accumulator.
+7. **Leading-one detection** on the magnitude of the sum.
+8. **Normalize** (shift and adjust exponent), **round** RNE, and **pack** the final FP32 output.
 
-Each lane is IEEE-754 binary32: {sign[31], exp[30:23], mant[22:0]}.
+## 4. Detailed Processing Steps
 
-⸻
+### 4.1 Decode
+For each lane `i`:
+- `sign_A = A_lane[i][31]`
+- `exp_A  = A_lane[i][30:23]`
+- `mant_A = A_lane[i][22:0]`
 
-3. Functional Behavior
+Same for `B`.
 
-3.1 Intended computation
+Create a 24-bit significand:
+- `sig_A = (exp_A==0) ? {1'b0, mant_A} : {1'b1, mant_A}`
+- `sig_B = (exp_B==0) ? {1'b0, mant_B} : {1'b1, mant_B}`
 
-For each lane i:
-	•	Extract sign/exponent/mantissa.
-	•	Form an internal mantissa with an implicit leading 1 for “non-zero” inputs.
-	•	Multiply mantissas via segmented multiplication across two cycles (clk_cntr driven).
-	•	Align partial products based on exponent compare logic.
-	•	Convert signed terms to 2’s complement.
-	•	Reduce via adder tree + optional accumulation (also time-muxed).
-	•	Normalize and round to produce FP32 output.
+### 4.2 Mantissa Multiplication
+Compute:
+- `mant_prod = sig_A * sig_B` (wide; at least 48 bits for 24x24)
 
-3.2 “Round only at the end” reference model
+**Submodule usage:**  
+`multi12bX12b.v` can be used as a building block for a segmented multiplier (e.g., 12b×12b partial products) if the implementation decomposes 24×24 into smaller pieces. Using 12 bits multiplier, multiply a_low * b_low + a_high*b_low << 12 + a_low * b_high << 12 + a_high*b_high <<24 
+	Obs: you can also multiply 24x24 bits as well, I selected 12x12.
 
-The testbench you’re using models the expected value as:
-	1.	Inputs are quantized to FP32 (pack/unpack)
-	2.	Products are accumulated in higher precision (Python float / FP64)
-	3.	Final result quantized once to FP32
+### 4.3 Exponent Computation and Comparison
+For each lane:
+- `exp_prod = exp_A + exp_B - 127` for normalized inputs.
+- For zeros/subnormals, behavior may treat them as zero contribution (implementation-defined but must be consistent).
 
-This corresponds to a MAC-style accumulation with a single rounding at the end, not FP32 multiply-add with rounding after each op.
+Compute:
+- `exp_max = maximum(exp_prod[i])` among lanes that are treated as valid/non-zero.
 
-⸻
+### 4.4 Alignment of Partial Products
+For each lane:
+- `shift = exp_max - exp_prod`
+- Right shift partial product by `shift` so that all products share a common exponent domain.
 
-4. Timing / Control (clk_cntr protocol)
+**Submodule usage:**  
+`Alignment_Shifter.v` performs the shifting of wide data by a shift amount and direction.
 
-4.1 Time-multiplex phases
+### 4.5 Sign Handling via Two's Complement
+Each aligned product is converted into signed two's complement representation using:
+- `sign_prod = sign_A XOR sign_B`
 
-clk_cntr must be driven in a 2-cycle sequence per operation:
-	•	Phase 0: clk_cntr = 0 for one rising edge of clk
-	•	Phase 1: clk_cntr = 1 for one rising edge of clk
-	•	Then return to idle (clk_cntr = 0)
+If `sign_prod==1`, negate the aligned magnitude:
+- `signed_pp = (~aligned) + 1`
 
-Internally, the design pipelines this as:
-	•	clk_cntr_stage1 <= clk_cntr
-	•	clk_cntr_stage2 <= clk_cntr_stage1
-	•	clk_cntr_stage3 <= clk_cntr_stage2
+This allows all terms to be accumulated with a pure adder tree.
 
-4.2 Output latency
+### 4.6 Adder Tree Reduction
+Sum all signed partial products in a balanced tree to reduce latency and logic depth.
 
-The current cocotb driver assumes:
-	•	You apply Phase0 edge then Phase1 edge.
-	•	Then you wait 4 additional rising edges
-	•	Then out is sampled.
+**Submodule usage:**
+- `Adder_Tree.v` implements the multi-input reduction structure.
+- `CLA_AdderTree.v`, `csla.v`, and `compressor7to2.v` may be used internally as adder primitives/accelerators.
 
-So “effective check time” is Phase1 + 4 cycles.
+### 4.7 Leading-One Detection and Normalization
+After summation, determine:
+- output sign = MSB of signed sum (or sign of the final signed value)
+- magnitude = absolute value of signed sum
 
-⸻
+Then:
+1. **Detect first '1'** (leading-one position) in the magnitude.
+2. **Normalize** magnitude so that it becomes `1.xxxxx` in the target mantissa field.
+3. Adjust exponent accordingly:
+   - `exp_out = exp_max + normalization_adjust`
 
-5. Supported / Unsupported IEEE-754 Cases
+**Submodule usage:**
+- `LZD.v` provides leading-zero/leading-one detection.
 
-5.1 Explicitly handled
-	•	Normalized numbers
-	•	RNE rounding in the final pack stage.
+### 4.8 Packing Output
+Construct FP32 result:
+- `out_sign` (1 bit)
+- `out_exp`  (8 bits)
+- `out_mant` (23 bits)
 
-Your cocotb testbench has already been updated to avoid generating Inf and to avoid overflow in stimulus. That matches the “finite-only” expectation.
+Rounding policy may be implementation-defined for this generic spec; typical choices are truncation or round-to-nearest-even. If rounding is implemented, ensure it is synthesizable and deterministic.
 
-⸻
+## 5. Special-Case Behavior (Generic Guidance)
 
-6. Verification Notes (based on your cocotb tests)
+- only normalized numbers are taken into account.
 
-6.1 Required handshake
+## 6. Synthesizability Requirements
+- No SystemVerilog Assertions (SVA) `property/sequence` syntax.
+- Avoid non-synthesizable constructs in the RTL datapath (e.g., real numbers).
+- Use `always_ff`/`always_comb` or `always @(*)`/`always @(posedge clk)` styles compatible with Icarus.
+- All arrays and loops must be synthesizable (static bounds).
+- Reset policy is implementation-defined; if no reset is present, ensure outputs are deterministically assigned before being sampled (e.g., via pipeline valid gating).
 
-The testbench assumes exactly:
-	•	Drive A, B
-	•	clk_cntr=0 for 1 cycle, then clk_cntr=1 for 1 cycle
-	•	Wait 4 cycles
-	•	Compare out
-
-⸻
-
-7. Acceptance Criteria
-
-A build of pe_fp32 is considered compliant with this spec if:
-	1.	For finite normal FP32 inputs (no NaN/Inf/subnormals), it matches the testbench reference model:
-	•	inputs quantized to FP32
-	•	accumulate in high precision
-	•	round once at the end to FP32
-	2.	It follows the defined clk_cntr 2-cycle protocol.
-	3.	It produces either +0 or -0 when the mathematical result is zero (unless the design is updated to force +0).
+## 7. Provided Files
+The implementation must keep these filenames/modules:
+- Top: `pe_fp32.sv`
+- Submodules:
+  - `Adder_Tree.v`
+  - `Alignment_Shifter.v`
+  - `CEC.v`
+  - `CLA_AdderTree.v`
+  - `LZD.v`
+  - `compressor7to2.v`
+  - `csla.v`
+  - `multi12bX12b.v`
