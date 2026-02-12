@@ -274,7 +274,7 @@ endmodule
 - `in` is `sum_f[65:0]` where `sum_f` is the magnitude of the signed sum.
 - `out` is `position` (normalization shift count).
 
-HINT:
+THIS CODE MUST BE PRESENT at pe_fp32.sv . IT IS THE NORMALIZATION. DON'T CHANGE IT.
         // -----------------------------
         // Stage 3 signals (normalize + pack)
         // -----------------------------
@@ -335,7 +335,7 @@ HINT:
             outt[31] = ssignf;
         end
 
-		// where the 20 comes from? It is the expected position of the leading one. For a 66 bit accumulator result of sum_f, the constant 20 is where the leading 1 should be placed, and it is compared to the output of the lzd to increase or decrease the exponent if necessary.
+	// be aware that ssum is 66 bits wide.
 END OF HINT
 ---
 
