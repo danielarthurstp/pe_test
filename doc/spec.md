@@ -227,6 +227,67 @@ module LZD(
 - `in` is `sum_f[63:0]` where `sum_f` is the magnitude of the signed sum.
 - `out` is `position` (normalization shift count).
 
+HINT:
+        // -----------------------------
+        // Stage 3 signals (normalize + pack)
+        // -----------------------------
+        wire [6:0]  position;
+        reg  [65:0] inter;
+        reg  [31:0] outtt;
+        reg  [31:0] outt;
+        reg         carry_rounder;
+		
+        // -----------------------------
+        // Stage 3
+        // -----------------------------
+        reg [22:0] mant_keep;
+        reg        G, R, S;
+        reg        lsb;
+        reg        inc;
+        reg [23:0] mant_rounded;  // 1 extra bit for carry
+		assign sum_f = ssum;
+
+        always @(*) begin
+        if (clk_cntr_stage3 == 1'b0) begin // says that we are not in stage 3
+            inter = 66'b0;
+            outt  = 32'b0;
+        end else begin // we are now in stage 3
+            inter = sum_f << position;  // remove the leading 1 of accumulated sum.
+
+            // Keep 23 bits (fraction field)
+            mant_keep = inter[65:43];
+
+            // Guard/round/sticky
+            G = inter[42];
+            R = inter[41];
+            S = |inter[40:0];
+
+            lsb = mant_keep[0];
+            inc = G & (R | S | lsb);   // RNE
+
+            mant_rounded = {1'b0, mant_keep} + inc;
+
+            if (mant_rounded[23]) begin
+            outt[22:0] = mant_rounded[23:1];  // shift right 1
+
+            end else begin
+            outt[22:0] = mant_rounded[22:0];
+            end
+
+            if (sum_f == 0) begin
+            outt[30:23] = 0;
+            end else if (position >= 20) begin
+            outt[30:23] = mmax_exp_s2 - (position - 20);
+            end else begin
+            outt[30:23] = mmax_exp_s2 + (20 - position);
+            end
+
+            if (mant_rounded[23] && sum_f != 0)
+            outt[30:23] = outt[30:23] + 1;
+
+            outt[31] = ssignf;
+        end
+END OF HINT
 ---
 
 ### 8.6 `CLA_AdderTree`, `csla`, `compressor7to2`
